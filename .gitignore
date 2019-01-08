@@ -7,14 +7,12 @@
 *.obj
 *.elf
 
-# Linker output
-*.ilk
-*.map
-*.exp
-
 # Debug files
 *.dSYM/
 *.su
 *.idb
 *.pdb
 *~
+
+tinycbor
+serial_upload
