@@ -1,24 +1,45 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 
 #include <sys/types.h>
 #include <inttypes.h>
-#include <sys/stat.h>
 #include <stdio.h>
-#include <fcntl.h>
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <time.h>
+#ifndef WIN32
 #include <unistd.h>
 #include <termios.h>
-#include <time.h>
 #include <sys/time.h>
 #include <arpa/inet.h>
+#else
+#include <windows.h>
+#include <winsock.h>
+#endif
 #include <assert.h>
 
 #include "serial_upload.h"
 #include "crc/crc16.h"
 #include "base64/base64.h"
 
-static const char *cmdname;
+const char *cmdname;
 
 #define TXBUF_SZ 2100
 #define FIRST_SEG_TMO 16
@@ -27,7 +48,7 @@ static const char *cmdname;
 struct upload_state {
     const char *devname;
     int speed;
-    int port;
+    HANDLE port;
     const char *filename;
     size_t file_sz;
     uint8_t *file;
@@ -35,7 +56,7 @@ struct upload_state {
     int verbose;
 } state;
 
-static void
+void
 dump_hex(const char *hdr, void *bufv, int cnt)
 {
     int i;
@@ -53,103 +74,17 @@ dump_hex(const char *hdr, void *bufv, int cnt)
     }
 }
 
-static int
-port_open(const char *name)
-{
-    int fd;
-
-    fd = open(name, O_RDWR | O_NONBLOCK);
-    if (fd < 0) {
-        fprintf(stderr, "%s: port %s open failed\n", cmdname, name);
-    }
-    return fd;
-}
-
-static int
-port_setup(int fd, unsigned long speed)
-{
-    struct termios tios;
-    int rc;
-
-    rc = tcgetattr(fd, &tios);
-    if (rc < 0) {
-        fprintf(stderr, "%s: tcgetattr() fail:%s\n", cmdname, strerror(errno));
-        return rc;
-    }
-
-    tios.c_iflag &= ~(ISTRIP | INLCR | IGNCR | ICRNL |
-      IXON | IXANY | IXOFF | IUTF8);
-    tios.c_oflag &= ~(OPOST | OCRNL | OFILL |
-      OFDEL | NLDLY | CRDLY | TABDLY | BSDLY | VTDLY | FFDLY);
-    tios.c_oflag |= ONOCR | ONLRET;
-    tios.c_cflag &= ~(CSIZE | CSTOPB | CRTSCTS);
-    tios.c_cflag |= CS8 | CREAD | CLOCAL;
-    tios.c_lflag &= ~(ISIG | ICANON | ECHO | ECHOE | ECHOK |
-      ECHONL | ECHOCTL | ECHOPRT | ECHOKE | FLUSHO | NOFLSH |
-      TOSTOP | PENDIN | IEXTEN);
-
-    rc = cfsetspeed(&tios, (speed_t)speed);
-    if (rc < 0) {
-        fprintf(stderr, "%s: cfsetspeed(%lu) failed\n", cmdname, speed);
-        return rc;
-    }
-
-    rc = tcsetattr(fd, TCSAFLUSH, &tios);
-    if (rc < 0) {
-        fprintf(stderr, "%s: tcsetattr() fail: %s\n", cmdname, strerror(errno));
-        return rc;
-    }
-    return 0;
-}
-
-static int
-file_read(const char *name, size_t *sz, uint8_t **bufp)
-{
-    FILE *fp;
-    struct stat st;
-    uint8_t *buf;
-    int rc;
-
-    fp = fopen(name, "r");
-    if (!fp) {
-        fprintf(stderr, "%s: open %s failed: %s\n", cmdname, name,
-          strerror(errno));
-        return -1;
-    }
-
-    rc = stat(name, &st);
-    if (rc < 0) {
-        fprintf(stderr, "%s: stat %s failed: %s\n", cmdname, name,
-          strerror(errno));
-        return -1;
-    }
-    *sz = st.st_size;
-
-    buf = malloc(st.st_size);
-    if (!buf) {
-        fprintf(stderr, "%s: malloc() failed\n", cmdname);
-        return -1;
-    }
-    rc = fread(buf, st.st_size, 1, fp);
-    if (rc != 1) {
-        fprintf(stderr, "%s: fread %s fail\n", cmdname, name);
-        return -1;
-    }
-    *bufp = buf;
-    return 0;
-}
-
 #define SHELL_NLIP_PKT          0x0609
 #define SHELL_NLIP_DATA         0x0414
 #define SHELL_NLIP_MAX_FRAME    128
 
 static int
-port_write(int fd, uint8_t *buf, int len)
+port_write(HANDLE fd, uint8_t *buf, size_t len)
 {
     uint16_t crc;
-    int off = 0;
-    int boff;
-    int blen;
+    size_t off = 0;
+    size_t boff;
+    size_t blen;
     char tmpbuf[512];
     uint8_t first_b[3];
 
@@ -186,42 +121,12 @@ port_write(int fd, uint8_t *buf, int len)
         if (state.verbose > 1) {
             dump_hex("TX encoded", tmpbuf, boff);
         }
-        blen = write(fd, tmpbuf, boff);
-        if (boff != blen) {
-            fprintf(stderr, "Write failed: %s\n", strerror(errno));
+	if (port_write_data(fd, tmpbuf, boff) < 0) {
             return -1;
         }
     }
 
     return 0;
-}
-
-static int
-port_read_poll(int fd, char *buf, int maxlen, int end_time)
-{
-    struct timeval tv;
-    time_t now;
-    int rc = 0;
-
-    while (!rc) {
-        gettimeofday(&tv, NULL);
-        now = tv.tv_sec;
-        if (now > end_time) {
-            fprintf(stderr, "Read timed out\n");
-            return -14;
-        }
-        rc = read(fd, buf, maxlen);
-        if (rc < 0 && errno == EAGAIN) {
-            rc = 0;
-        }
-        if (rc > 0 && state.verbose > 1) {
-            dump_hex("RX", buf, rc);
-        }
-    }
-    if (rc < 0) {
-        fprintf(stderr, "Read failed: %d %s\n", errno, strerror(errno));
-    }
-    return rc;
 }
 
 static int
@@ -238,18 +143,16 @@ port_read_pkt_len(char *buf, int len)
 }
 
 static int
-port_read(int fd, uint8_t *buf, int maxlen, int tmo)
+port_read(HANDLE fd, uint8_t *buf, size_t maxlen, int tmo)
 {
-    time_t end_time, now;
-    struct timeval tv;
+    int end_time, now;
     char tmpbuf[512];
     int rc;
     int off;
     int len;
     int soff;
 
-    gettimeofday(&tv, NULL);
-    now = tv.tv_sec;
+    now = time_get();
     end_time = now + tmo;
 
     soff = 0;
@@ -258,7 +161,8 @@ port_read(int fd, uint8_t *buf, int maxlen, int tmo)
         if (soff == off) {
             soff = off = 0;
         }
-        rc = port_read_poll(fd, &tmpbuf[off], maxlen - off, end_time);
+        rc = port_read_poll(fd, &tmpbuf[off], maxlen - off, end_time,
+                            state.verbose);
         if (rc < 0) {
             break;
         }
@@ -300,38 +204,39 @@ port_read(int fd, uint8_t *buf, int maxlen, int tmo)
 static void
 flush_dev_console(void)
 {
-    write(state.port, "\n", 1);
+    port_write_data(state.port, "\n", 1);
 }
 
 static int
 echo_ctl(int val)
 {
     uint8_t buf[512];
-    int cnt;
+    size_t cnt;
     int rc;
 
     cnt = serial_uploader_echo_ctl(buf, sizeof(buf), 0);
     if (cnt < 0) {
-        fprintf(stderr, "%s: message encoding issue %d\n", cmdname, cnt);
-        return cnt;
+        fprintf(stderr, "%s: message encoding issue %zu\n", cmdname, cnt);
+        return (int)cnt;
     }
     rc = port_write(state.port, buf, cnt);
     if (rc < 0) {
         fprintf(stderr, "write fail %d\n", rc);
         return rc;
     }
-    cnt = port_read(state.port, buf, sizeof(buf), 2);
-    if (cnt < 0) {
-        return cnt;
+    rc = port_read(state.port, buf, sizeof(buf), 2);
+    if (rc < 0) {
+        fprintf(stderr, "read fail %d\n", rc);
+        return rc;
     }
     return 0;
 }
 
-static int
+static size_t
 img_upload_tx_prepare(uint8_t *txbuf, size_t off, int *lenp)
 {
-    int blen;
-    int cnt;
+    size_t blen;
+    size_t cnt;
 
     if (off == 0) {
         blen = 32;
@@ -346,11 +251,11 @@ img_upload_tx_prepare(uint8_t *txbuf, size_t off, int *lenp)
           &state.file[off], blen);
     }
     if (cnt < 0) {
-        fprintf(stderr, "%s: message encoding issue %d\n",
-          cmdname, cnt);
+        fprintf(stderr, "%s: message encoding issue %zd\n",
+                cmdname, cnt);
     } else {
         if (state.verbose) {
-            fprintf(stdout, " %lu-%lu\n", off, off + blen);
+            fprintf(stdout, " %zu-%zu\n", off, off + blen);
         }
     }
     *lenp = blen;
@@ -377,7 +282,7 @@ img_upload(void)
      */
     state.imgchunk = ((state.imgchunk * 3 / 4) - 16);
     if (state.verbose) {
-        fprintf(stdout, "Starting upload %lu bytes\n", state.file_sz);
+        fprintf(stdout, "Starting upload %zu bytes\n", state.file_sz);
     }
 
     txcnt = img_upload_tx_prepare(txbuf, 0, &blen);
@@ -408,7 +313,7 @@ img_upload(void)
             return 5;
         }
 	if (state.verbose) {
-            fprintf(stdout, "ack to %ld\n", next_off);
+            fprintf(stdout, "ack to %zu\n", next_off);
 	} else {
             fprintf(stdout, ".");
             fflush(stdout);
@@ -417,7 +322,7 @@ img_upload(void)
             break;
         }
         if (next_off > state.file_sz) {
-            fprintf(stderr, "%s: offset %ld larger than file %ld\n",
+            fprintf(stderr, "%s: offset %zu larger than file %zu\n",
               cmdname, next_off, state.file_sz);
             return -1;
         }
@@ -561,11 +466,16 @@ validate_opts(void)
         fprintf(stderr, "%s: Need file to upload\n", cmdname);
         usage();
     }
+    if (state.devname == NULL) {
+        fprintf(stderr, "%s: Need serial device to use\n", cmdname);
+        usage();
+    }
 }
 
 int
 main(int argc, char **argv)
 {
+    HANDLE fd;
     int rc;
 
     cmdname = argv[0];
@@ -575,11 +485,11 @@ main(int argc, char **argv)
     parse_opts(argc, argv);
     validate_opts();
 
-    rc = port_open(state.devname);
-    if (rc < 0) {
+    fd = port_open(state.devname);
+    if (fd < 0) {
         exit(1);
     }
-    state.port = rc;
+    state.port = fd;
 
     rc = port_setup(state.port, state.speed);
     if (rc < 0) {
@@ -602,5 +512,7 @@ main(int argc, char **argv)
     }
 #endif
     free(state.file);
+    fflush(stderr);
+    fflush(stdout);
     return 0;
 }

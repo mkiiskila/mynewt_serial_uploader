@@ -1,19 +1,34 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 
+#ifndef WIN32
 #include <arpa/inet.h>
+#else
+#include <winsock.h>
+#endif
 
 #include "cbor.h"
 
 #include "serial_upload.h"
 
 struct nmgr_hdr {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    uint8_t  nh_op:3;           /* NMGR_OP_XXX */
-    uint8_t  _res1:5;
-#endif
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-    uint8_t  _res1:5;
-    uint8_t  nh_op:3;           /* NMGR_OP_XXX */
-#endif
+    uint8_t  nh_op_res;         /* 5 bits reserved, 3 bits NMGR_OP_XXX */
     uint8_t  nh_flags;          /* XXX reserved for future flags */
     uint16_t nh_len;            /* length of the payload */
     uint16_t nh_group;          /* NMGR_GROUP_XXX */
@@ -25,6 +40,9 @@ struct nmgr_hdr {
 #define NMGR_OP_READ_RSP        (1)
 #define NMGR_OP_WRITE           (2)
 #define NMGR_OP_WRITE_RSP       (3)
+
+#define NMGR_OP_SET(hdr, op)    ((hdr)->nh_op_res = (op) & 0x7)
+#define NMGR_OP_GET(hdr)        ((hdr)->nh_op_res & 0x7)
 
 /* First 64 groups are reserved for system level newtmgr commands.
  * Per-user commands are then defined after group 64.
@@ -66,7 +84,7 @@ serial_uploader_echo_ctl(uint8_t *buf, size_t sz, int val)
 
 	nh = (struct nmgr_hdr *)buf;
 	memset(nh, 0, sizeof(*nh));
-	nh->nh_op = NMGR_OP_WRITE;
+	NMGR_OP_SET(nh, NMGR_OP_WRITE);
 	nh->nh_group = htons(MGMT_GROUP_ID_DEFAULT);
 	nh->nh_id = NMGR_ID_CONS_ECHO_CTRL;
 
@@ -102,7 +120,7 @@ serial_uploader_create_seg0(uint8_t *buf, size_t sz,
 
 	nh = (struct nmgr_hdr *)buf;
 	memset(nh, 0, sizeof(*nh));
-	nh->nh_op = NMGR_OP_WRITE;
+	NMGR_OP_SET(nh, NMGR_OP_WRITE);
 	nh->nh_group = htons(MGMT_GROUP_ID_IMAGE);
 	nh->nh_id = IMGMGR_NMGR_ID_UPLOAD;
 
@@ -143,7 +161,7 @@ serial_uploader_create_segX(uint8_t *buf, size_t sz,
 
 	nh = (struct nmgr_hdr *)buf;
 	memset(nh, 0, sizeof(*nh));
-	nh->nh_op = NMGR_OP_WRITE;
+	NMGR_OP_SET(nh, NMGR_OP_WRITE);
 	nh->nh_group = htons(MGMT_GROUP_ID_IMAGE);
 	nh->nh_id = IMGMGR_NMGR_ID_UPLOAD;
 
@@ -172,14 +190,14 @@ serial_uploader_create_segX(uint8_t *buf, size_t sz,
 int
 serial_uploader_is_rsp(uint8_t *buf, size_t sz)
 {
-	struct nmgr_hdr *nh;
+	int op;
 
-	if (sz < sizeof(*nh)) {
+	if (sz < sizeof(struct nmgr_hdr)) {
 		return 0;
 	}
 
-	nh = (struct nmgr_hdr *)buf;
-	if (nh->nh_op == NMGR_OP_READ_RSP || nh->nh_op == NMGR_OP_WRITE_RSP) {
+	op = NMGR_OP_GET((struct nmgr_hdr *)buf);
+	if (op == NMGR_OP_READ_RSP || op == NMGR_OP_WRITE_RSP) {
 		return 1;
 	}
 	return 0;
@@ -194,7 +212,7 @@ serial_uploader_decode_rsp(uint8_t *buf, size_t sz, size_t *off)
 	int rc;
 	int64_t val64;
 	int64_t rsp_rc;
-	int64_t rsp_off;
+	int64_t rsp_off = 0;
 	char *name;
 	size_t nlen;
 
