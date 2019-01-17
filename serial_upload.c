@@ -455,6 +455,7 @@ validate_opts(void)
     switch (state.speed) {
     case 115200:
     case 230400:
+    case 921600:
     case 1000000:
         break;
     default:
