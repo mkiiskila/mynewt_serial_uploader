@@ -109,6 +109,38 @@ serial_uploader_echo_ctl(uint8_t *buf, size_t sz, int val)
 }
 
 size_t
+serial_uploader_reset(uint8_t *buf, size_t sz, int val)
+{
+	int rc;
+	CborEncoder enc;
+	CborEncoder map;
+	struct nmgr_hdr *nh;
+	int len;
+
+	nh = (struct nmgr_hdr *)buf;
+	memset(nh, 0, sizeof(*nh));
+	NMGR_OP_SET(nh, NMGR_OP_WRITE);
+	nh->nh_group = htons(MGMT_GROUP_ID_DEFAULT);
+	nh->nh_id = NMGR_ID_RESET;
+
+	cbor_encoder_init(&enc, (void *)(nh + 1), sz, 0);
+
+	rc = cbor_encoder_create_map(&enc, &map, CborIndefiniteLength);
+
+	rc |= cbor_encode_text_stringz(&map, "_h");
+	rc |= cbor_encode_byte_string(&map, (void *)&nh, sizeof(nh));
+
+	rc |= cbor_encoder_close_container(&enc, &map);
+	if (rc) {
+		return -1;
+	}
+	len = cbor_encoder_get_buffer_size(&enc, (void *)(nh + 1));
+	nh->nh_len = htons(len);
+
+	return len + sizeof(*nh);
+}
+
+size_t
 serial_uploader_create_seg0(uint8_t *buf, size_t sz,
     size_t file_sz, uint8_t *data, int seglen)
 {

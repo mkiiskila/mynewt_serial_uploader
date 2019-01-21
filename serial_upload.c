@@ -346,6 +346,34 @@ retransmit:
     return 0;
 }
 
+static int
+reset_device(void)
+{
+    uint8_t buf[512];
+    size_t cnt;
+    int rc;
+
+    cnt = serial_uploader_reset(buf, sizeof(buf), 0);
+    if (cnt < 0) {
+        fprintf(stderr, "%s: message encoding issue %zu\n", cmdname, cnt);
+        return (int)cnt;
+    }
+    rc = port_write(state.port, buf, cnt);
+    if (rc < 0) {
+        fprintf(stderr, "write fail %d\n", rc);
+        return rc;
+    }
+    rc = port_read(state.port, buf, sizeof(buf), 2);
+    if (rc < 0) {
+        fprintf(stderr, "read fail %d\n", rc);
+        return rc;
+    }
+    if (state.verbose) {
+        fprintf(stdout, "Device reset\n");
+    }
+    return 0;
+}
+
 static void
 usage(void)
 {
@@ -504,8 +532,12 @@ main(int argc, char **argv)
 
     flush_dev_console();
 
-    if (!echo_ctl(0)) {
-        img_upload();
+    rc = echo_ctl(0);
+    if (rc == 0) {
+        rc = img_upload();
+    }
+    if (rc == 0) {
+        rc = reset_device();
     }
 #if 0
     if (echo_ctl(1)) {
