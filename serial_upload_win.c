@@ -20,8 +20,13 @@
 #include <stdio.h>
 #include <inttypes.h>
 #include <sys/types.h>
+#include <sysinfoapi.h>
 
 #include "serial_upload.h"
+
+#ifdef __MINGW32__
+#define GetTickCount64 GetTickCount
+#endif
 
 /*
  * https://docs.microsoft.com/en-us/previous-versions/ff802693(v=msdn.10)#overview
@@ -176,7 +181,7 @@ file_read(const char *name, size_t *sz, uint8_t **bufp)
 {
     HANDLE fd;
     int len;
-    uint32_t len2;
+    DWORD len2;
     uint8_t *buf = NULL;
 
     fd = CreateFileA(name, GENERIC_READ, FILE_SHARE_READ, NULL,

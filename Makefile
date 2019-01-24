@@ -10,7 +10,20 @@ SRCS = \
 	crc/crc16.c \
 	base64/base64.c
 
+WINSRCS = \
+	serial_upload.c \
+	serial_upload_win.c \
+	serial_upload_msg.c \
+	tinycbor/src/cborparser.c \
+	tinycbor/src/cborencoder.c \
+	tinycbor/src/cborparser_dup_string.c \
+	crc/crc16.c \
+	base64/base64.c
+
 .PHONY: all
+
+win64: tinycbor $(SRCS) serial_upload.h
+	x86_64-w64-mingw32-gcc $(WINSRCS) -lws2_32 -I ./tinycbor/src -I . -o serial_upload.exe
 
 all: tinycbor serial_upload
 
