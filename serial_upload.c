@@ -310,7 +310,7 @@ img_upload(void)
         } else if (rc > 0) {
             fprintf(stderr, "%s: newtmgr error response %d\n",
               cmdname, rc);
-            return 5;
+            return -5;
         }
 	if (state.verbose) {
             fprintf(stdout, "ack to %zu\n", next_off);
@@ -547,5 +547,8 @@ main(int argc, char **argv)
     free(state.file);
     fflush(stderr);
     fflush(stdout);
+    if (rc) {
+        exit(1);
+    }
     return 0;
 }
