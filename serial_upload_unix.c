@@ -29,6 +29,40 @@
 
 #include "serial_upload.h"
 
+#if __linux__
+#include <libgen.h>
+
+static char *devname;
+
+static void
+port_open_storename(const char *name)
+{
+    devname = strdup(name);
+    if (!devname) {
+        return;
+    }
+    devname = basename(devname);
+}
+
+static void
+port_setup_lowlatency(char *string)
+{
+    int fd;
+    char filename[128];
+
+    snprintf(filename, sizeof(filename) - 1,
+             "/sys/bus/usb-serial/devices/%s/latency_timer", devname);
+    fd = open(filename, O_WRONLY);
+    if (fd < 0) {
+        fprintf(stderr, "Warning: failed to set %s to %s: %s\n",
+                filename, string, strerror(errno));
+        return;
+    }
+    write(fd, string, strlen(string));
+    close(fd);
+}
+#endif
+
 int
 port_open(const char *name)
 {
@@ -38,6 +72,9 @@ port_open(const char *name)
     if (fd < 0) {
         fprintf(stderr, "%s: port %s open failed\n", cmdname, name);
     }
+#if __linux__
+    port_open_storename(name);
+#endif
     return fd;
 }
 
@@ -64,9 +101,35 @@ port_setup(int fd, unsigned long speed)
       ECHONL | ECHOCTL | ECHOPRT | ECHOKE | FLUSHO | NOFLSH |
       TOSTOP | PENDIN | IEXTEN);
 
+    switch (speed) {
+#ifdef B115200
+    case 115200:
+        speed = B115200;
+        break;
+#endif
+#ifdef B230400
+    case 230400:
+        speed = B230400;
+        break;
+#endif
+#ifdef B921600
+    case 921600:
+        speed = B921600;
+        break;
+#endif
+#ifdef B1000000
+    case 1000000:
+        speed = B1000000;
+        break;
+#endif
+    default:
+        fprintf(stderr, "Invalid speed %ld for this platform\n", speed);
+        return -1;
+    }
     rc = cfsetspeed(&tios, (speed_t)speed);
     if (rc < 0) {
-        fprintf(stderr, "%s: cfsetspeed(%lu) failed\n", cmdname, speed);
+        fprintf(stderr, "%s: cfsetspeed(%lu) fail: %s\n", cmdname, speed,
+                strerror(errno));
         return rc;
     }
 
@@ -75,6 +138,9 @@ port_setup(int fd, unsigned long speed)
         fprintf(stderr, "%s: tcsetattr() fail: %s\n", cmdname, strerror(errno));
         return rc;
     }
+#if __linux__
+    port_setup_lowlatency("1");
+#endif
     return 0;
 }
 

@@ -33,7 +33,7 @@ tinycbor/src/%.c:
 
 serial_upload: $(SRCS) serial_upload.h
 	@echo serial_upload
-	cc -o serial_upload -ggdb -Wall -I tinycbor/src -I . $(SRCS)
+	$(CC) -o serial_upload -ggdb -Wall -I tinycbor/src -I . $(SRCS)
 
 clean:
 	rm serial_upload
