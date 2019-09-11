@@ -90,10 +90,20 @@ port_setup(int fd, unsigned long speed)
         return rc;
     }
 
-    tios.c_iflag &= ~(ISTRIP | INLCR | IGNCR | ICRNL |
-      IXON | IXANY | IXOFF | IUTF8);
-    tios.c_oflag &= ~(OPOST | OCRNL | OFILL |
-      OFDEL | NLDLY | CRDLY | TABDLY | BSDLY | VTDLY | FFDLY);
+    tios.c_iflag &= ~(ISTRIP | INLCR | IGNCR | ICRNL | IXON | IXANY | IXOFF);
+#ifdef IUTF8
+    tios.c_iflag &= ~IUTF8;
+#endif
+    tios.c_oflag &= ~(OPOST | OCRNL | TABDLY);
+#ifdef OFILL
+    tios.c_oflag &= ~OFILL;
+#endif
+#ifdef OFDEL
+    tios.c_oflag &= ~OFDEL;
+#endif
+#ifdef NLDLY
+    tios.c_oflag &= ~(NLDLY | CRDLY | BSDLY | FFDLY  | VTDLY);
+#endif
     tios.c_oflag |= ONOCR | ONLRET;
     tios.c_cflag &= ~(CSIZE | CSTOPB | CRTSCTS);
     tios.c_cflag |= CS8 | CREAD | CLOCAL;
